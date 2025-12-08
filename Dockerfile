@@ -4,8 +4,8 @@ WORKDIR /app
 
 COPY index.html /srv/index.html
 COPY Caddyfile /etc/caddy/Caddyfile
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+COPY start.sh ./
+RUN chmod +x start.sh
 
 ENV IPS=4 OPERA=0
 
