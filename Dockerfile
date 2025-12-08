@@ -1,29 +1,16 @@
-# 選擇 Debian 作為基礎映像
-FROM debian:latest
+FROM caddy:2.8-alpine
 
-# 設定工作目錄
 WORKDIR /app
 
-# 安裝必要的套件：bash 和 curl
-RUN apt-get update &&\
-    apt-get install -y curl
+COPY index.html /srv/index.html
+COPY Caddyfile /etc/caddy/Caddyfile
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
-# 設定環境變數的預設值，這些變數對應腳本的配置
-# 注意：WSPORT 預設為空，在 start.sh 中會檢查並隨機分配
-ENV OPERA=0 \
-    COUNTRY=AM \
-    IPS=4 \
-    TOKEN="" \
-    WSPORT=""
+ENV IPS=4 OPERA=0
 
-# 將啟動腳本複製到容器中
-COPY start.sh .
+# 不写死端口，因为它由 WSPORT 决定
+# EXPOSE 只是声明，可选
+EXPOSE 8080
 
-# 賦予啟動腳本執行權限
-RUN chmod +x start.sh
-
-# 定義容器啟動時執行的指令
-CMD ["./start.sh", "1"]
-
-# 暴露端口僅為說明用途，實際連線透過 Cloudflare Tunnel (443)
-EXPOSE 7860
+CMD ["/bin/sh", "-c", "/app/start.sh 1 & caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"]
