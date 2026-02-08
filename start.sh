@@ -149,7 +149,7 @@ quicktunnel() {
         done
     else
         DOMAIN="$ARGO_DOMAIN"
-        echo "--- 使用固定 Argo 域名: $DOMAIN ---"
+        echo "--- 使用固定 Argo 域名: $DOMAIN:443"
     fi
 }
 
