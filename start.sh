@@ -111,28 +111,64 @@ quicktunnel() {
         > /dev/null 2>&1 &
     CF_PID=$!
 
-    # 4) 获取 Argo 域名
-    while true; do
-        echo "正在嘗試獲取 Argo 域名..."
-        RESP=$(curl -s "http://127.0.0.1:$metricsport/metrics" || true)
+    #!/bin/sh
 
-        if echo "$RESP" | grep -q 'userHostname='; then
-            echo "獲取成功，正在解析..."
-            DOMAIN=$(echo "$RESP" | grep 'userHostname="' | sed -E 's/.*userHostname="https?:\/\/([^"]+)".*/\1/')
+### ===== 配置区 =====
+METRICS_PORT=18080
+HTTP_DIR="/opt/argo"
+TOKEN=""          # 没有就留空
+CHECK_INTERVAL=5
+MAX_TRIES=0       # 0 = 永不超时
+### ==================
 
-            echo "--- ECH + Cloudflared 啟動成功 ---"
-            if [ -z "$TOKEN" ]; then
-                echo "未設置 token, 連接為: $DOMAIN:443"
-            else
-                echo "已設置 token, 連接為: $DOMAIN:443 （token 不顯示）"
-            fi
-            break
-        else
-            echo "未獲取到 userHostname，5秒後重試..."
-            sleep 5
+cd "$HTTP_DIR" || exit 1
+
+echo "[+] 启动 cloudflared ..."
+
+# 启动 cloudflared（后台）
+./cloudflared tunnel \
+  --url http://127.0.0.1:80 \
+  --metrics 127.0.0.1:${METRICS_PORT} \
+  ${TOKEN:+--token "$TOKEN"} \
+  >/tmp/cloudflared.log 2>&1 &
+
+CF_PID=$!
+echo "[+] cloudflared PID: $CF_PID"
+
+TRIES=0
+LAST_DOMAIN=""
+
+while true; do
+    RESP=$(curl -s "http://127.0.0.1:${METRICS_PORT}/metrics" || true)
+
+    DOMAIN=$(echo "$RESP" \
+        | grep 'userHostname="' \
+        | head -n 1 \
+        | sed -E 's/.*userHostname="https?:\/\/([^"]+)".*/\1/')
+
+    if [ -n "$DOMAIN" ]; then
+        if [ "$DOMAIN" != "$LAST_DOMAIN" ]; then
+            echo "[✓] 获取 Argo 域名: $DOMAIN"
+
+            echo "window.CONN_INFO = \"連接為: ${DOMAIN}:443\";" > info.js
+            echo "window.LAST_UPDATE = \"$(date '+%Y-%m-%d %H:%M:%S')\";" >> info.js
+
+            echo "[✓] 已更新 info.js"
+            LAST_DOMAIN="$DOMAIN"
         fi
-    done
-}
+    else
+        echo "[…] 尚未获取到 Argo 域名，${CHECK_INTERVAL}s 后重试"
+    fi
+
+    TRIES=$((TRIES+1))
+    if [ "$MAX_TRIES" -gt 0 ] && [ "$TRIES" -ge "$MAX_TRIES" ]; then
+        echo "[✗] 超时，退出"
+        exit 1
+    fi
+
+    sleep "$CHECK_INTERVAL"
+done
+
 
 # ---------------- main ----------------
 
