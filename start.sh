@@ -5,161 +5,185 @@ set -e
 ARGO_DOMAIN="${ARGO_DOMAIN:-}"        # 固定隧道域名（留空 = 临时隧道）
 ARGO_AUTH="${ARGO_AUTH:-}"            # token 或 credentials.json 内容
 ARGO_PORT="${ARGO_PORT:-8001}"        # 固定隧道端口
-# ===========================================================
 
-# ================= 工具函数 =================
+# 獲取一個隨機端口
 get_free_port() {
     echo $(( ( RANDOM % 20000 ) + 10000 ))
 }
 
-# ================= 主函数 =================
 quicktunnel() {
-    echo "--- 设置 DNS ---"
+    echo "--- 正在強制設定 DNS 為 1.1.1.1/1.0.0.1 ---"
     echo "nameserver 1.1.1.1" > /etc/resolv.conf
     echo "nameserver 1.0.0.1" >> /etc/resolv.conf
 
-    echo "--- 下载二进制 ---"
+    echo "--- 正在下載服務二進制文件 ---"
+
+    local ARCH
     ARCH=$(uname -m)
 
+    local ECH_URL=""
+    local OPERA_URL=""
+    local CLOUDFLARED_URL=""
+
     case "$ARCH" in
-        x86_64|amd64)
+        x86_64 | x64 | amd64 )
             ECH_URL="https://github.com/webappstars/ech-hug/releases/download/3.0/ech-tunnel-linux-amd64"
             OPERA_URL="https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy.linux-amd64"
             CLOUDFLARED_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
             ;;
-        i386|i686)
+        i386 | i686 )
             ECH_URL="https://github.com/webappstars/ech-hug/releases/download/3.0/ech-tunnel-linux-386"
             OPERA_URL="https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy.linux-386"
             CLOUDFLARED_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-386"
             ;;
-        arm64|aarch64)
+        armv8 | arm64 | aarch64 )
             ECH_URL="https://github.com/webappstars/ech-hug/releases/download/3.0/ech-tunnel-linux-arm64"
             OPERA_URL="https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy.linux-arm64"
             CLOUDFLARED_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64"
             ;;
-        *)
-            echo "不支持的架构: $ARCH"
+        * )
+            echo "當前架構 $ARCH 沒有适配。退出。"
             exit 1
             ;;
     esac
 
-    curl -fsSL "$ECH_URL" -o ech-server
-    curl -fsSL "$OPERA_URL" -o opera
-    curl -fsSL "$CLOUDFLARED_URL" -o cloudflared
-    chmod +x ech-server opera cloudflared
+    curl -fL "$ECH_URL" -o ech-server-linux
+    curl -fL "$OPERA_URL" -o opera-linux
+    curl -fL "$CLOUDFLARED_URL" -o cloudflared-linux
 
-    echo "--- 端口分配 ---"
-    WSPORT=${WSPORT:-$(get_free_port)}
+    chmod +x cloudflared-linux ech-server-linux opera-linux
+
+    local COUNTRY_UPPER="${COUNTRY^^}"
+
+    echo "--- 啟動服務 ---"
+
+    # 端口分配：
+    # Caddy = WSPORT
+    # ECH   = WSPORT + 1
+    if [ -z "$WSPORT" ]; then
+        WSPORT=$(get_free_port)
+        echo "WSPORT 未設置，自動選取給 Caddy 的端口: $WSPORT"
+    else
+        echo "使用自定義 WSPORT 給 Caddy: $WSPORT"
+    fi
+
     ECHPORT=$((WSPORT + 1))
     export WSPORT ECHPORT
+    echo "ECH Server 將使用端口: $ECHPORT"
 
-    echo "Caddy: $WSPORT"
-    echo "ECH:   $ECHPORT"
-
-    # ========== Opera ==========
-    if [ "${OPERA:-0}" = "1" ]; then
+    # 1) Opera Proxy
+    if [ "$OPERA" = "1" ]; then
         operaport=$(get_free_port)
-        COUNTRY=${COUNTRY:-AM}
-        nohup ./opera -country "$COUNTRY" -socks-mode \
-            -bind-address "127.0.0.1:$operaport" >/dev/null 2>&1 &
+        echo "啟動 Opera Proxy (port: $operaport, country: $COUNTRY_UPPER)..."
+        nohup ./opera-linux \
+            -country "$COUNTRY_UPPER" \
+            -socks-mode \
+            -bind-address "127.0.0.1:$operaport" \
+            > /dev/null 2>&1 &
+        OPERA_PID=$!
     fi
 
-    # ========== ECH ==========
-    ECH_ARGS=(./ech-server -l "ws://0.0.0.0:$ECHPORT")
-    [ -n "$TOKEN" ] && ECH_ARGS+=(-token "$TOKEN")
-    [ "${OPERA:-0}" = "1" ] && ECH_ARGS+=(-f "socks5://127.0.0.1:$operaport")
-    nohup "${ECH_ARGS[@]}" >/dev/null 2>&1 &
+    # 2) ECH Server
+    sleep 1
 
-    # ========== Cloudflared ==========
-    metricsport=$(get_free_port)
+    ECH_ARGS=(./ech-server-linux -l "ws://0.0.0.0:$ECHPORT")
 
-    USE_FIXED_ARGO=0
-    if [ -n "$ARGO_DOMAIN" ] && [ -n "$ARGO_AUTH" ]; then
-        USE_FIXED_ARGO=1
-    fi
-
-    if [ "$USE_FIXED_ARGO" = "1" ]; then
-        echo "--- 使用固定 Argo 隧道 ---"
-
-        if echo "$ARGO_AUTH" | grep -q '{'; then
-            mkdir -p /root/.cloudflared
-            echo "$ARGO_AUTH" > /root/.cloudflared/argo.json
-            AUTH_ARGS=(--credentials-file /root/.cloudflared/argo.json)
-        else
-            AUTH_ARGS=(--token "$ARGO_AUTH")
-        fi
-
-        nohup ./cloudflared tunnel run \
-            "${AUTH_ARGS[@]}" \
-            --edge-ip-version "${IPS:-4}" \
-            --protocol http2 \
-            --url "http://127.0.0.1:$ARGO_PORT" \
-            --metrics "127.0.0.1:$metricsport" \
-            >/dev/null 2>&1 &
+    if [ -n "$TOKEN" ]; then
+        ECH_ARGS+=(-token "$TOKEN")
+        echo "ECH Server 已設置 token（不在前台顯示）"
     else
-        echo "--- 使用临时 Argo 隧道 ---"
-        nohup ./cloudflared \
-            --edge-ip-version "${IPS:-4}" \
-            --protocol http2 \
-            tunnel --url "127.0.0.1:$ECHPORT" \
-            --metrics "127.0.0.1:$metricsport" \
-            >/dev/null 2>&1 &
+        echo "ECH Server 未設置 token"
     fi
 
-    # ========== HTML 信息页 ==========
-    HTTP_DIR="/opt/argo"
-    mkdir -p "$HTTP_DIR"
+    if [ "$OPERA" = "1" ]; then
+        ECH_ARGS+=(-f "socks5://127.0.0.1:$operaport")
+    fi
 
-    cat > "$HTTP_DIR/index.html" <<'EOF'
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-<meta charset="UTF-8">
-<title>Argo Info</title>
-<style>
-body{background:#020617;color:#e5e7eb;display:flex;justify-content:center;align-items:center;height:100vh;font-family:system-ui}
-.box{background:#020617;padding:24px 32px;border-radius:12px}
-.domain{color:#38bdf8;font-size:20px;margin-top:8px}
-</style>
-</head>
-<body>
-<div class="box">
-<h2 id="s">等待 Argo…</h2>
-<div class="domain" id="d"></div>
-</div>
-<script src="info.js"></script>
-<script>
-if(window.CONN_INFO){
-  s.innerText="Argo 已就绪";
-  d.innerText=window.CONN_INFO;
-}
-</script>
-</body>
-</html>
-EOF
+    echo "啟動 ECH Server (port: $ECHPORT)..."
+    nohup "${ECH_ARGS[@]}" > /dev/null 2>&1 &
+    ECH_PID=$!
 
-    (
-    LAST=""
-    while true; do
-        if [ "$USE_FIXED_ARGO" = "1" ]; then
-            DOMAIN="$ARGO_DOMAIN"
-        else
+    # 3) Cloudflared -> ECHPORT
+    metricsport=${ARGO_PORT:-$(get_free_port)}  # 如果配置了 ARGO_PORT 则使用
+    echo "啟動 Cloudflared Tunnel (metrics port: $metricsport)..."
+    ./cloudflared-linux update > /dev/null 2>&1 || true
+
+    ARGO_ARGS=("--protocol" "http2")
+    if [ -n "$ARGO_AUTH" ]; then
+        # 可以支持 token 或 credentials.json 内容
+        echo "$ARGO_AUTH" > ./argo_auth.json
+        ARGO_ARGS+=("--credentials-file" "./argo_auth.json")
+    fi
+
+    if [ -n "$ARGO_DOMAIN" ]; then
+        ARGO_ARGS+=("--hostname" "$ARGO_DOMAIN")
+    fi
+
+    nohup ./cloudflared-linux \
+        --edge-ip-version "$IPS" \
+        tunnel --url "127.0.0.1:$ECHPORT" \
+        --metrics "0.0.0.0:$metricsport" \
+        "${ARGO_ARGS[@]}" \
+        > /dev/null 2>&1 &
+    CF_PID=$!
+
+    # 4) 获取 Argo 域名
+    if [ -z "$ARGO_DOMAIN" ]; then
+        while true; do
+            echo "正在嘗試獲取 Argo 臨時域名..."
             RESP=$(curl -s "http://127.0.0.1:$metricsport/metrics" || true)
-            DOMAIN=$(echo "$RESP" | grep 'userHostname="' | head -n1 \
-                | sed -E 's/.*userHostname="https?:\/\/([^"]+)".*/\1/' || true)
-        fi
 
-        if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "$LAST" ]; then
-            echo "window.CONN_INFO=\"連接為: ${DOMAIN}:443\";" > "$HTTP_DIR/info.js"
-            LAST="$DOMAIN"
-        fi
-        sleep 5
-    done
-    ) &
+            if echo "$RESP" | grep -q 'userHostname='; then
+                DOMAIN=$(echo "$RESP" | grep 'userHostname="' | sed -E 's/.*userHostname="https?:\/\/([^"]+)".*/\1/')
+                echo "--- ECH + Cloudflared 啟動成功 ---"
+                if [ -z "$TOKEN" ]; then
+                    echo "未設置 token, 連接為: $DOMAIN:443"
+                else
+                    echo "已設置 token, 連接為: $DOMAIN:443 （token 不顯示）"
+                fi
+                break
+            else
+                echo "未獲取到 userHostname，5秒後重試..."
+                sleep 5
+            fi
+        done
+    else
+        DOMAIN="$ARGO_DOMAIN"
+        echo "--- 使用固定 Argo 域名: $DOMAIN ---"
+    fi
 }
 
-# ================= main =================
-quicktunnel
+# ---------------- main ----------------
 
-echo "--- 启动 Caddy（$WSPORT）---"
+MODE="${1:-1}"  # 默认模式 1
+
+if [ "$MODE" = "1" ]; then
+    # Opera 参数检查
+    if [ "$OPERA" = "1" ]; then
+        echo "已啟用 Opera 前置代理。"
+        COUNTRY=${COUNTRY:-AM}
+        COUNTRY=${COUNTRY^^}
+        if [ "$COUNTRY" != "AM" ] && [ "$COUNTRY" != "AS" ] && [ "$COUNTRY" != "EU" ]; then
+            echo "錯誤：請設置正確的 OPERA_COUNTRY (AM/AS/EU)。目前值: $COUNTRY"
+            exit 1
+        fi
+    elif [ "$OPERA" != "0" ]; then
+        echo "錯誤：OPERA 變數只能是 0 或 1。目前值: $OPERA"
+        exit 1
+    fi
+
+    # IPS 参数检查
+    if [ "$IPS" != "4" ] && [ "$IPS" != "6" ]; then
+        echo "錯誤：IPS 變數只能是 4 或 6。目前值: $IPS"
+        exit 1
+    fi
+
+    quicktunnel
+else
+    echo "使用非預期模式啟動。"
+    exit 1
+fi
+
+echo "--- 啟動 Caddy 前台服務（port: $WSPORT）---"
+# 最后用 exec 让 caddy 占据 PID1，容器不会退出
 exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
