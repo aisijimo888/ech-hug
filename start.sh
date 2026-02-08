@@ -109,28 +109,9 @@ quicktunnel() {
         tunnel --url "127.0.0.1:$ECHPORT" \
         --metrics "0.0.0.0:$metricsport" \
         > /dev/null 2>&1 &
-    CF_PID=$!
 
-    #!/bin/sh
 
-### ===== 配置区 =====
-METRICS_PORT=18080
-HTTP_DIR="/opt/argo"
-TOKEN=""          # 没有就留空
-CHECK_INTERVAL=5
-MAX_TRIES=0       # 0 = 永不超时
-### ==================
 
-cd "$HTTP_DIR" || exit 1
-
-echo "[+] 启动 cloudflared ..."
-
-# 启动 cloudflared（后台）
-./cloudflared tunnel \
-  --url http://127.0.0.1:80 \
-  --metrics 127.0.0.1:${METRICS_PORT} \
-  ${TOKEN:+--token "$TOKEN"} \
-  >/tmp/cloudflared.log 2>&1 &
 
 CF_PID=$!
 echo "[+] cloudflared PID: $CF_PID"
