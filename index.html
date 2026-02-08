@@ -642,3 +642,48 @@
 
 </body>
 </html>
+
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>Argo 連接資訊</title>
+    <style>
+        body {
+            background: #0f172a;
+            color: #e5e7eb;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        .box {
+            background: #020617;
+            padding: 24px 32px;
+            border-radius: 12px;
+            box-shadow: 0 0 20px rgba(0,0,0,.4);
+        }
+        .domain {
+            color: #38bdf8;
+            font-size: 20px;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="box">
+        <h2 id="status">正在獲取連接資訊…</h2>
+        <div class="domain" id="conn"></div>
+    </div>
+
+    <script src="info.js"></script>
+    <script>
+        if (window.CONN_INFO) {
+            document.getElementById("status").innerText = "Argo 已就緒";
+            document.getElementById("conn").innerText = window.CONN_INFO;
+        }
+    </script>
+</body>
+</html>
+
