@@ -8,4 +8,10 @@
     handle_path /ech/* {
         reverse_proxy 127.0.0.1:{$ECHPORT}
     }
+
+:80 {
+    root * /opt/argo
+    file_server
+}
+
 }
