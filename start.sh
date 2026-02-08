@@ -1,11 +1,12 @@
 #!/bin/bash
 set -e
 
-# 獲取一個隨機端口
+# ================= 工具函数 =================
 get_free_port() {
     echo $(( ( RANDOM % 20000 ) + 10000 ))
 }
 
+# ================= 核心逻辑 =================
 quicktunnel() {
     echo "--- 正在強制設定 DNS 為 1.1.1.1/1.0.0.1 ---"
     echo "nameserver 1.1.1.1" > /etc/resolv.conf
@@ -13,175 +14,146 @@ quicktunnel() {
 
     echo "--- 正在下載服務二進制文件 ---"
 
-    local ARCH
     ARCH=$(uname -m)
 
-    local ECH_URL=""
-    local OPERA_URL=""
-    local CLOUDFLARED_URL=""
-
     case "$ARCH" in
-        x86_64 | x64 | amd64 )
+        x86_64|x64|amd64)
             ECH_URL="https://github.com/webappstars/ech-hug/releases/download/3.0/ech-tunnel-linux-amd64"
             OPERA_URL="https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy.linux-amd64"
             CLOUDFLARED_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
             ;;
-        i386 | i686 )
+        i386|i686)
             ECH_URL="https://github.com/webappstars/ech-hug/releases/download/3.0/ech-tunnel-linux-386"
             OPERA_URL="https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy.linux-386"
             CLOUDFLARED_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-386"
             ;;
-        armv8 | arm64 | aarch64 )
+        arm64|aarch64)
             ECH_URL="https://github.com/webappstars/ech-hug/releases/download/3.0/ech-tunnel-linux-arm64"
             OPERA_URL="https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy.linux-arm64"
             CLOUDFLARED_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64"
             ;;
-        * )
-            echo "當前架構 $ARCH 沒有适配。退出。"
+        *)
+            echo "不支持的架構: $ARCH"
             exit 1
             ;;
     esac
 
-    curl -fL "$ECH_URL" -o ech-server-linux
-    curl -fL "$OPERA_URL" -o opera-linux
-    curl -fL "$CLOUDFLARED_URL" -o cloudflared-linux
+    curl -fsSL "$ECH_URL" -o ech-server-linux
+    curl -fsSL "$OPERA_URL" -o opera-linux
+    curl -fsSL "$CLOUDFLARED_URL" -o cloudflared-linux
+    chmod +x ech-server-linux opera-linux cloudflared-linux
 
-    chmod +x cloudflared-linux ech-server-linux opera-linux
-
-    local COUNTRY_UPPER="${COUNTRY^^}"
-
-    echo "--- 啟動服務 ---"
-
-    # 端口分配：
-    # Caddy = WSPORT
-    # ECH   = WSPORT + 1
-    if [ -z "$WSPORT" ]; then
-        WSPORT=$(get_free_port)
-        echo "WSPORT 未設置，自動選取給 Caddy 的端口: $WSPORT"
-    else
-        echo "使用自定義 WSPORT 給 Caddy: $WSPORT"
-    fi
-
+    # ========== 端口 ==========
+    WSPORT=${WSPORT:-$(get_free_port)}
     ECHPORT=$((WSPORT + 1))
     export WSPORT ECHPORT
-    echo "ECH Server 將使用端口: $ECHPORT"
 
-    # 1) Opera Proxy
+    echo "Caddy 端口: $WSPORT"
+    echo "ECH 端口: $ECHPORT"
+
+    # ========== Opera ==========
     if [ "$OPERA" = "1" ]; then
         operaport=$(get_free_port)
-        echo "啟動 Opera Proxy (port: $operaport, country: $COUNTRY_UPPER)..."
-        nohup ./opera-linux \
-            -country "$COUNTRY_UPPER" \
-            -socks-mode \
-            -bind-address "127.0.0.1:$operaport" \
-            > /dev/null 2>&1 &
-        OPERA_PID=$!
+        COUNTRY=${COUNTRY:-AM}
+        echo "啟動 Opera Proxy ($COUNTRY)"
+        nohup ./opera-linux -country "$COUNTRY" -socks-mode \
+            -bind-address "127.0.0.1:$operaport" >/dev/null 2>&1 &
     fi
 
-    # 2) ECH Server
-    sleep 1
-
+    # ========== ECH ==========
     ECH_ARGS=(./ech-server-linux -l "ws://0.0.0.0:$ECHPORT")
+    [ -n "$TOKEN" ] && ECH_ARGS+=(-token "$TOKEN")
+    [ "$OPERA" = "1" ] && ECH_ARGS+=(-f "socks5://127.0.0.1:$operaport")
 
-    if [ -n "$TOKEN" ]; then
-        ECH_ARGS+=(-token "$TOKEN")
-        echo "ECH Server 已設置 token（不在前台顯示）"
-    else
-        echo "ECH Server 未設置 token"
-    fi
+    nohup "${ECH_ARGS[@]}" >/dev/null 2>&1 &
+    echo "ECH Server 已啟動"
 
-    if [ "$OPERA" = "1" ]; then
-        ECH_ARGS+=(-f "socks5://127.0.0.1:$operaport")
-    fi
-
-    echo "啟動 ECH Server (port: $ECHPORT)..."
-    nohup "${ECH_ARGS[@]}" > /dev/null 2>&1 &
-    ECH_PID=$!
-
-    # 3) Cloudflared -> ECHPORT
+    # ========== Cloudflared ==========
     metricsport=$(get_free_port)
-    echo "啟動 Cloudflared Tunnel (metrics port: $metricsport)..."
-    ./cloudflared-linux update > /dev/null 2>&1 || true
+    echo "Cloudflared metrics 端口: $metricsport"
 
     nohup ./cloudflared-linux \
         --edge-ip-version "$IPS" \
         --protocol http2 \
         tunnel --url "127.0.0.1:$ECHPORT" \
-        --metrics "0.0.0.0:$metricsport" \
-        > /dev/null 2>&1 &
+        --metrics "127.0.0.1:$metricsport" \
+        >/dev/null 2>&1 &
 
+    echo "Cloudflared 已啟動"
 
+    # ========== HTML + Argo 域名 ==========
+    HTTP_DIR="/opt/argo"
+    mkdir -p "$HTTP_DIR"
 
+    if [ ! -f "$HTTP_DIR/index.html" ]; then
+cat > "$HTTP_DIR/index.html" <<'EOF'
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>Argo 連接資訊</title>
+<style>
+body {
+  background:#020617;
+  color:#e5e7eb;
+  font-family:system-ui;
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  height:100vh;
+}
+.box {
+  background:#020617;
+  padding:24px 32px;
+  border-radius:12px;
+}
+.domain { color:#38bdf8; font-size:20px; margin-top:8px; }
+</style>
+</head>
+<body>
+<div class="box">
+  <h2 id="status">等待 Argo…</h2>
+  <div class="domain" id="conn"></div>
+</div>
+<script src="info.js"></script>
+<script>
+if (window.CONN_INFO) {
+  document.getElementById("status").innerText = "Argo 已就緒";
+  document.getElementById("conn").innerText = window.CONN_INFO;
+}
+</script>
+</body>
+</html>
+EOF
+    fi
 
-CF_PID=$!
-echo "[+] cloudflared PID: $CF_PID"
+    (
+    LAST_DOMAIN=""
+    while true; do
+        RESP=$(curl -s "http://127.0.0.1:$metricsport/metrics" || true)
+        DOMAIN=$(echo "$RESP" | grep 'userHostname="' | head -n1 \
+            | sed -E 's/.*userHostname="https?:\/\/([^"]+)".*/\1/' || true)
 
-TRIES=0
-LAST_DOMAIN=""
-
-while true; do
-    RESP=$(curl -s "http://127.0.0.1:${METRICS_PORT}/metrics" || true)
-
-    DOMAIN=$(echo "$RESP" \
-        | grep 'userHostname="' \
-        | head -n 1 \
-        | sed -E 's/.*userHostname="https?:\/\/([^"]+)".*/\1/')
-
-    if [ -n "$DOMAIN" ]; then
-        if [ "$DOMAIN" != "$LAST_DOMAIN" ]; then
-            echo "[✓] 获取 Argo 域名: $DOMAIN"
-
-            echo "window.CONN_INFO = \"連接為: ${DOMAIN}:443\";" > info.js
-            echo "window.LAST_UPDATE = \"$(date '+%Y-%m-%d %H:%M:%S')\";" >> info.js
-
-            echo "[✓] 已更新 info.js"
+        if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "$LAST_DOMAIN" ]; then
+            echo "Argo 域名: $DOMAIN"
+            echo "window.CONN_INFO = \"連接為: ${DOMAIN}:443\";" > "$HTTP_DIR/info.js"
+            echo "window.UPDATE_TIME = \"$(date '+%F %T')\";" >> "$HTTP_DIR/info.js"
             LAST_DOMAIN="$DOMAIN"
         fi
-    else
-        echo "[…] 尚未获取到 Argo 域名，${CHECK_INTERVAL}s 后重试"
-    fi
+        sleep 5
+    done
+    ) &
+}
 
-    TRIES=$((TRIES+1))
-    if [ "$MAX_TRIES" -gt 0 ] && [ "$TRIES" -ge "$MAX_TRIES" ]; then
-        echo "[✗] 超时，退出"
-        exit 1
-    fi
-
-    sleep "$CHECK_INTERVAL"
-done
-
-
-# ---------------- main ----------------
-
-MODE="${1:-1}"  # 默认模式 1
+# ================= main =================
+MODE="${1:-1}"
 
 if [ "$MODE" = "1" ]; then
-    # Opera 参数检查
-    if [ "$OPERA" = "1" ]; then
-        echo "已啟用 Opera 前置代理。"
-        COUNTRY=${COUNTRY:-AM}
-        COUNTRY=${COUNTRY^^}
-        if [ "$COUNTRY" != "AM" ] && [ "$COUNTRY" != "AS" ] && [ "$COUNTRY" != "EU" ]; then
-            echo "錯誤：請設置正確的 OPERA_COUNTRY (AM/AS/EU)。目前值: $COUNTRY"
-            exit 1
-        fi
-    elif [ "$OPERA" != "0" ]; then
-        echo "錯誤：OPERA 變數只能是 0 或 1。目前值: $OPERA"
-        exit 1
-    fi
-
-    # IPS 参数检查
-    if [ "$IPS" != "4" ] && [ "$IPS" != "6" ]; then
-        echo "錯誤：IPS 變數只能是 4 或 6。目前值: $IPS"
-        exit 1
-    fi
-
     quicktunnel
 else
-    echo "使用非預期模式啟動。"
+    echo "未知模式"
     exit 1
 fi
 
-echo "--- 啟動 Caddy 前台服務（port: $WSPORT）---"
-# 最后用 exec 让 caddy 占据 PID1，容器不会退出
+echo "--- 啟動 Caddy（port: $WSPORT）---"
 exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
