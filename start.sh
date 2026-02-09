@@ -3,9 +3,11 @@ set -e
 
 # ================= Argo 环境变量（JS 等价） =================
 ARGO_DOMAIN="${ARGO_DOMAIN:-}"        # 固定隧道域名（留空 = 临时隧道）
-ARGO_AUTH="${ARGO_AUTH:-}"            # token 或 credentials.json ���容
+ARGO_AUTH="${ARGO_AUTH:-}"            # token 或 credentials.json 内容
 ARGO_PORT="${ARGO_PORT:-8001}"        # 固定隧道端口
-ARGO_TUNNEL_TOKEN="${ARGO_TUNNEL_TOKEN:-}"  # 隧道 token
+IPS="${IPS:-4}"                       # ← 添加默认值
+OPERA="${OPERA:-0}"                   # ← 添加默认值
+COUNTRY="${COUNTRY:-AM}"              # ← 添加默认值
 
 # 獲取一個隨機端口
 get_free_port() {
@@ -105,94 +107,105 @@ quicktunnel() {
     ECH_PID=$!
 
     # 3) Cloudflared -> ECHPORT
-    metricsport=${ARGO_PORT:-$(get_free_port)}  # 如果配置了 ARGO_PORT 则使用
+    metricsport=${ARGO_PORT:-$(get_free_port)}
     echo "啟動 Cloudflared Tunnel (metrics port: $metricsport)..."
     ./cloudflared-linux update > /dev/null 2>&1 || true
 
-    ARGO_ARGS=("--protocol" "http2")
+    # ===== 关键修复：创建日志文件用于调试 =====
+    CLOUDFLARED_LOG="/tmp/cloudflared.log"
     
-    # 固定隧道配置
-    if [ -n "$ARGO_DOMAIN" ]; then
-        # 固定隧道模式：需要 tunnel token 或 credentials 文件
-        if [ -n "$ARGO_TUNNEL_TOKEN" ]; then
-            ARGO_ARGS+=("--token" "$ARGO_TUNNEL_TOKEN")
-            echo "使用隧道 Token 連接固定隧道"
-        elif [ -n "$ARGO_AUTH" ]; then
-            # 支持 credentials.json 内容
-            echo "$ARGO_AUTH" > ./argo_auth.json
-            ARGO_ARGS+=("--credentials-file" "./argo_auth.json")
-            echo "使用 Credentials 文件連接固定隧道"
-        else
-            echo "錯誤：固定隧道需要設置 ARGO_TUNNEL_TOKEN 或 ARGO_AUTH"
-            exit 1
-        fi
-    else
-        # 臨時隧道模式：使用 credentials.json（如果提供）
-        if [ -n "$ARGO_AUTH" ]; then
-            echo "$ARGO_AUTH" > ./argo_auth.json
-            ARGO_ARGS+=("--credentials-file" "./argo_auth.json")
-        fi
+    ARGO_ARGS=("--protocol" "http2")
+    if [ -n "$ARGO_AUTH" ]; then
+        # 创建绝对路径的凭证文件
+        ARGO_AUTH_FILE="/tmp/argo_auth.json"
+        echo "$ARGO_AUTH" > "$ARGO_AUTH_FILE"
+        chmod 600 "$ARGO_AUTH_FILE"
+        ARGO_ARGS+=("--credentials-file" "$ARGO_AUTH_FILE")
+        echo "✓ Argo 凭证文件已写入: $ARGO_AUTH_FILE"
     fi
 
+    if [ -n "$ARGO_DOMAIN" ]; then
+        ARGO_ARGS+=("--hostname" "$ARGO_DOMAIN")
+        echo "✓ 使用固定隧道域名: $ARGO_DOMAIN"
+    else
+        echo "✓ 使用临时隧道"
+    fi
+
+    # ===== 启动 Cloudflared，保留日志用于调试 =====
+    echo "正在启动 Cloudflared..."
     nohup ./cloudflared-linux \
         --edge-ip-version "$IPS" \
         tunnel --url "127.0.0.1:$ECHPORT" \
         --metrics "0.0.0.0:$metricsport" \
         "${ARGO_ARGS[@]}" \
-        > /dev/null 2>&1 &
+        > "$CLOUDFLARED_LOG" 2>&1 &
     CF_PID=$!
+    
+    echo "Cloudflared PID: $CF_PID"
+    sleep 3
+    
+    # 检查进程是否还在运行
+    if ! kill -0 $CF_PID 2>/dev/null; then
+        echo "❌ Cloudflared 启动失败！错误信息："
+        cat "$CLOUDFLARED_LOG"
+        echo ""
+        echo "请检查："
+        echo "1. ARGO_AUTH 凭证是否正确"
+        echo "2. ARGO_DOMAIN 是否有效（固定隧道模式）"
+        echo "3. 网络连接是否正常"
+        exit 1
+    fi
+    
+    echo "✓ Cloudflared 进程已启动"
 
     # 4) 获取 Argo 域名
     if [ -z "$ARGO_DOMAIN" ]; then
-        # 臨時隧道：需要從 metrics 端點获取域名
-        while true; do
-            echo "正在嘗試獲取 Argo 臨時域名..."
-            RESP=$(curl -s "http://127.0.0.1:$metricsport/metrics" || true)
+        echo "--- 正在获取临时隧道域名 ---"
+        DOMAIN=""
+        for attempt in {1..60}; do
+            echo "尝试 $attempt/60..."
+            RESP=$(curl -s "http://127.0.0.1:$metricsport/metrics" 2>/dev/null || true)
 
             if echo "$RESP" | grep -q 'userHostname='; then
                 DOMAIN=$(echo "$RESP" | grep 'userHostname="' | sed -E 's/.*userHostname="https?:\/\/([^"]+)".*/\1/')
-                echo "--- ECH + Cloudflared 啟動成功 ---"
-                if [ -z "$TOKEN" ]; then
-                    echo "未設置 token, 連接為: $DOMAIN:443"
-                else
-                    echo "已設置 token, 連接為: $DOMAIN:443 （token 不顯示）"
+                if [ -n "$DOMAIN" ]; then
+                    echo "--- ECH + Cloudflared 啟動成功 ---"
+                    if [ -z "$TOKEN" ]; then
+                        echo "未設置 token, 連接為: $DOMAIN:443"
+                    else
+                        echo "已設置 token, 連接為: $DOMAIN:443 （token 不顯示）"
+                    fi
+                    break
                 fi
-                break
-            else
-                echo "未獲取到 userHostname，5秒後重試..."
-                sleep 5
             fi
+            sleep 1
         done
+        
+        if [ -z "$DOMAIN" ]; then
+            echo "❌ 无法获取临时隧道域名"
+            echo "Cloudflared 日志:"
+            tail -20 "$CLOUDFLARED_LOG"
+            exit 1
+        fi
     else
-        # 固定隧道：直接使用配置的域名
         DOMAIN="$ARGO_DOMAIN"
-        sleep 3  # 等待隧道建立連接
+        sleep 2
+        echo "--- 使用固定 Argo 域名: $DOMAIN:443 ---"
         
-        # 驗證隧道連接
-        echo "正在驗證隧道連接..."
-        RETRY_COUNT=0
-        while [ $RETRY_COUNT -lt 5 ]; do
-            RESP=$(curl -s "http://127.0.0.1:$metricsport/metrics" || true)
-            if echo "$RESP" | grep -q 'tunnelHostname=\|userHostname='; then
-                echo "--- ECH + Cloudflared 固定隧道啟動成功 ---"
-                echo "固定隧道域名: $DOMAIN:443"
-                break
+        # 验证隧道连接状态
+        if RESP=$(curl -s "http://127.0.0.1:$metricsport/metrics" 2>/dev/null); then
+            if echo "$RESP" | grep -q 'userHostname='; then
+                echo "✓ 隧道已成功连接"
             else
-                RETRY_COUNT=$((RETRY_COUNT + 1))
-                echo "隧道未就緒，重試 ($RETRY_COUNT/5)..."
-                sleep 2
+                echo "⚠ 隧道状态未知，请检查 metrics: http://127.0.0.1:$metricsport/metrics"
             fi
-        done
-        
-        if [ $RETRY_COUNT -eq 5 ]; then
-            echo "警告：隧道連接超時，但已啟動。請檢查 ARGO_TUNNEL_TOKEN 是否有效。"
         fi
     fi
 }
 
 # ---------------- main ----------------
 
-MODE="${1:-1}"  # 默认模式 1
+MODE="${1:-1}"
 
 if [ "$MODE" = "1" ]; then
     # Opera 参数检查
