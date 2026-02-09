@@ -5,7 +5,6 @@ set -e
 ARGO_PORT="${ARGO_PORT:-8001}"        # metrics 端口
 ARGO_AUTH="${ARGO_AUTH:-eyJhIjoiYWJmZGRiMGY3NzdmYzQzZDhjOGJlZmY4Zjc1MTE5YzEiLCJ0IjoiYWYwMDMxZTQtNmE5Ni00ZjNmLThkN2ItOGNiOGVlMTQ4NmFhIiwicyI6IlpqVXpOMk5qTXpBdFpERXdNaTAwWm1FMUxUZ3paV010TkRnd01UWmlObVF4TWpFMSJ9}"            # tunnel credentials.json 内容
 TUNNEL_NAME="${TUNNEL_NAME:-ech-koyeb}"        # Tunnel 名字（不是域名）
-
 IPS="${IPS:-4}"
 OPERA="${OPERA:-0}"
 COUNTRY="${COUNTRY:-AM}"
@@ -83,23 +82,34 @@ quicktunnel() {
     fi
 
     echo "启动 ECH Server..."
-    nohup "${ECH_ARGS[@]}" > /dev/null 2>&1 &
+    nohup "${ECH_ARGS[@]}" > /tmp/ech.log 2>&1 &
 
-    sleep 1
+    # ================= 检查 ECH 端口 =================
+    echo "等待 ECH 监听端口 $ECHPORT..."
+    ECH_OK=0
+    for i in {1..15}; do
+        if bash -c "</dev/tcp/127.0.0.1/$ECHPORT" >/dev/null 2>&1; then
+            ECH_OK=1
+            break
+        fi
+        sleep 1
+    done
 
-    if ! ss -lnt | grep -q ":$ECHPORT"; then
-        echo "❌ ECH 未监听端口 $ECHPORT"
+    if [ "$ECH_OK" != "1" ]; then
+        echo "❌ ECH 在 15 秒内未监听端口 $ECHPORT"
+        echo "ECH 日志："
+        tail -20 /tmp/ech.log
         exit 1
     fi
+    echo "✓ ECH 已成功监听端口 $ECHPORT"
 
-    # ================= Cloudflared（固定 Tunnel） =================
+    # ================= Cloudflared =================
     if [ -z "$ARGO_AUTH" ] || [ -z "$TUNNEL_NAME" ]; then
         echo "❌ 必须设置 ARGO_AUTH 和 TUNNEL_NAME"
         exit 1
     fi
 
     echo "--- 启动固定 Cloudflare Tunnel ---"
-
     CLOUDFLARED_LOG="/tmp/cloudflared.log"
     ARGO_AUTH_FILE="/tmp/argo_auth.json"
     CF_CONFIG="/tmp/cloudflared.yml"
@@ -132,21 +142,4 @@ EOF
         exit 1
     fi
 
-    echo "✓ Cloudflare Tunnel 已连接 (PID $CF_PID)"
-}
-
-# ================= 参数校验 =================
-if [ "$IPS" != "4" ] && [ "$IPS" != "6" ]; then
-    echo "❌ IPS 只能是 4 或 6"
-    exit 1
-fi
-
-if [ "$OPERA" != "0" ] && [ "$OPERA" != "1" ]; then
-    echo "❌ OPERA 只能是 0 或 1"
-    exit 1
-fi
-
-quicktunnel
-
-echo "--- 启动 Caddy 前台 (port: $WSPORT) ---"
-exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+    echo "✓ Cloudflare Tunnel 已连接 (PID $
