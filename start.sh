@@ -149,10 +149,15 @@ cat > /srv/index.html <<EOF
 </head>
 <body>
   <h1>隧道启动成功</h1>
-  <p>域名: <a href="https://$TUNNEL_DOMAIN" target="_blank">$TUNNEL_DOMAIN</a></p>
+  <p>域名:
+    <a href="https://$TUNNEL_DOMAIN" target="_blank">
+      $TUNNEL_DOMAIN
+    </a>
+  </p>
 </body>
 </html>
 EOF
+}
 
 # ================= main =================
 quicktunnel
