@@ -157,7 +157,6 @@ cat > /srv/index.html <<EOF
 </body>
 </html>
 EOF
-}
 
 # ================= main =================
 quicktunnel
