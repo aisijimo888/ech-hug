@@ -120,23 +120,23 @@ quicktunnel() {
     # ================= 临时域名 =================
     if [ -z "$ARGO_DOMAIN" ]; then
         echo "--- 获取临时隧道域名 ---"
-        HOSTNAME=""
+        TUNNEL_DOMAIN=""
         for i in $(seq 1 30); do
-            HOSTNAME=$(curl -s "http://127.0.0.1:$ARGO_PORT/metrics" 2>/dev/null | grep 'userHostname=' | sed -E 's/.*userHostname="([^"]+)".*/\1/')
-            if [ -n "$HOSTNAME" ]; then
-                echo "✓ 隧道启动成功，域名: $HOSTNAME"
+            TUNNEL_DOMAIN=$(curl -s "http://127.0.0.1:$ARGO_PORT/metrics" 2>/dev/null | grep 'userHostname=' | sed -E 's/.*userHostname="([^"]+)".*/\1/')
+            if [ -n "$TUNNEL_DOMAIN" ]; then
+                echo "✓ 隧道启动成功，域名: $TUNNEL_DOMAIN"
                 break
             fi
             sleep 1
         done
-        if [ -z "$HOSTNAME" ]; then
+        if [ -z "$TUNNEL_DOMAIN" ]; then
             echo "❌ 获取临时域名失败"
             tail -20 "$CLOUDFLARED_LOG"
             exit 1
         fi
     else
-        HOSTNAME="$ARGO_DOMAIN"
-        echo "✓ 使用固定域名: $HOSTNAME"
+        TUNNEL_DOMAIN="$ARGO_DOMAIN"
+        echo "✓ 使用固定域名: $TUNNEL_DOMAIN"
     fi
 }
 # ================= main =================
@@ -149,7 +149,7 @@ cat > /srv/index.html <<EOF
 </head>
 <body>
   <h1>隧道启动成功</h1>
-  <p>域名: <a href="https://$HOSTNAME" target="_blank">$HOSTNAME</a></p>
+  <p>域名: <a href="https://$TUNNEL_DOMAIN" target="_blank">$TUNNEL_DOMAIN</a></p>
 </body>
 </html>
 EOF
