@@ -140,6 +140,9 @@ quicktunnel() {
     fi
 }
 # ================= main =================
+# 确保此时 TUNNEL_DOMAIN 已经非空
+echo "当前隧道域名: $TUNNEL_DOMAIN"
+
 cat > /srv/index.html <<EOF
 <!DOCTYPE html>
 <html lang="zh-CN">
