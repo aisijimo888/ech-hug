@@ -3,8 +3,9 @@ set -e
 
 # ================= Argo 环境变量（JS 等价） =================
 ARGO_DOMAIN="${ARGO_DOMAIN:-}"        # 固定隧道域名（留空 = 临时隧道）
-ARGO_AUTH="${ARGO_AUTH:-}"            # token 或 credentials.json 内容
+ARGO_AUTH="${ARGO_AUTH:-}"            # token 或 credentials.json ���容
 ARGO_PORT="${ARGO_PORT:-8001}"        # 固定隧道端口
+ARGO_TUNNEL_TOKEN="${ARGO_TUNNEL_TOKEN:-}"  # 隧道 token
 
 # 獲取一個隨機端口
 get_free_port() {
@@ -109,14 +110,28 @@ quicktunnel() {
     ./cloudflared-linux update > /dev/null 2>&1 || true
 
     ARGO_ARGS=("--protocol" "http2")
-    if [ -n "$ARGO_AUTH" ]; then
-        # 可以支持 token 或 credentials.json 内容
-        echo "$ARGO_AUTH" > ./argo_auth.json
-        ARGO_ARGS+=("--credentials-file" "./argo_auth.json")
-    fi
-
+    
+    # 固定隧道配置
     if [ -n "$ARGO_DOMAIN" ]; then
-        ARGO_ARGS+=("--hostname" "$ARGO_DOMAIN")
+        # 固定隧道模式：需要 tunnel token 或 credentials 文件
+        if [ -n "$ARGO_TUNNEL_TOKEN" ]; then
+            ARGO_ARGS+=("--token" "$ARGO_TUNNEL_TOKEN")
+            echo "使用隧道 Token 連接固定隧道"
+        elif [ -n "$ARGO_AUTH" ]; then
+            # 支持 credentials.json 内容
+            echo "$ARGO_AUTH" > ./argo_auth.json
+            ARGO_ARGS+=("--credentials-file" "./argo_auth.json")
+            echo "使用 Credentials 文件連接固定隧道"
+        else
+            echo "錯誤：固定隧道需要設置 ARGO_TUNNEL_TOKEN 或 ARGO_AUTH"
+            exit 1
+        fi
+    else
+        # 臨時隧道模式：使用 credentials.json（如果提供）
+        if [ -n "$ARGO_AUTH" ]; then
+            echo "$ARGO_AUTH" > ./argo_auth.json
+            ARGO_ARGS+=("--credentials-file" "./argo_auth.json")
+        fi
     fi
 
     nohup ./cloudflared-linux \
@@ -129,6 +144,7 @@ quicktunnel() {
 
     # 4) 获取 Argo 域名
     if [ -z "$ARGO_DOMAIN" ]; then
+        # 臨時隧道：需要從 metrics 端點获取域名
         while true; do
             echo "正在嘗試獲取 Argo 臨時域名..."
             RESP=$(curl -s "http://127.0.0.1:$metricsport/metrics" || true)
@@ -148,8 +164,29 @@ quicktunnel() {
             fi
         done
     else
+        # 固定隧道：直接使用配置的域名
         DOMAIN="$ARGO_DOMAIN"
-        echo "--- 使用固定 Argo 域名: $DOMAIN:443"
+        sleep 3  # 等待隧道建立連接
+        
+        # 驗證隧道連接
+        echo "正在驗證隧道連接..."
+        RETRY_COUNT=0
+        while [ $RETRY_COUNT -lt 5 ]; do
+            RESP=$(curl -s "http://127.0.0.1:$metricsport/metrics" || true)
+            if echo "$RESP" | grep -q 'tunnelHostname=\|userHostname='; then
+                echo "--- ECH + Cloudflared 固定隧道啟動成功 ---"
+                echo "固定隧道域名: $DOMAIN:443"
+                break
+            else
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                echo "隧道未就緒，重試 ($RETRY_COUNT/5)..."
+                sleep 2
+            fi
+        done
+        
+        if [ $RETRY_COUNT -eq 5 ]; then
+            echo "警告：隧道連接超時，但已啟動。請檢查 ARGO_TUNNEL_TOKEN 是否有效。"
+        fi
     fi
 }
 
