@@ -135,7 +135,7 @@ quicktunnel() {
     echo "正在启动 Cloudflared..."
     nohup ./cloudflared-linux \
         --edge-ip-version "$IPS" \
-        tunnel --url "127.0.0.1:$WSPORT" \
+        tunnel --url "127.0.0.1:$ECHPORT" \
         --metrics "0.0.0.0:$metricsport" \
         "${ARGO_ARGS[@]}" \
         > "$CLOUDFLARED_LOG" 2>&1 &
