@@ -139,6 +139,20 @@ quicktunnel() {
         echo "✓ 使用固定域名: $HOSTNAME"
     fi
 }
+# ================= main =================
+cat > /srv/index.html <<EOF
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>隧道状态</title>
+</head>
+<body>
+  <h1>隧道启动成功</h1>
+  <p>域名: <a href="https://$HOSTNAME" target="_blank">$HOSTNAME</a></p>
+</body>
+</html>
+EOF
 
 # ================= main =================
 quicktunnel
