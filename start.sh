@@ -8,6 +8,7 @@ ARGO_PORT="${ARGO_PORT:-8001}"        # Cloudflared metrics
 IPS="${IPS:-4}"                        # 4 或 6
 OPERA="${OPERA:-0}"                     # 0 或 1
 COUNTRY="${COUNTRY:-AM}"                # Opera 代理国家
+TOKEN="${TOKEN:-}"                      # 可选 ECH token
 
 # ================= 工具函数 =================
 get_free_port() {
@@ -48,7 +49,7 @@ quicktunnel() {
             CLOUDFLARED_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64"
             ;;
         *)
-            echo "不支持的架构: $ARCH"
+            echo "❌ 不支持的架构: $ARCH"
             exit 1
             ;;
     esac
@@ -103,24 +104,14 @@ quicktunnel() {
     chmod 600 /tmp/argo_auth.json
 
     echo "--- 启动 Cloudflared ---"
-    CF_CONFIG="/tmp/cloudflared.yml"
-    cat > "$CF_CONFIG" <<EOF
-tunnel: $TUNNEL_NAME
-credentials-file: /tmp/argo_auth.json
-protocol: http2
-metrics: 0.0.0.0:$ARGO_PORT
-ingress:
-  - service: http://127.0.0.1:$ECHPORT
-  - service: http_status:404
-EOF
-
-    # 前台运行 Cloudflared
-    ./cloudflared tunnel run --config "$CF_CONFIG" &
+    ./cloudflared tunnel run "$TUNNEL_NAME" \
+        --credentials-contents "$(cat /tmp/argo_auth.json)" \
+        --url "http://127.0.0.1:$ECHPORT" \
+        --metrics "0.0.0.0:$ARGO_PORT" &
     CF_PID=$!
 
     if ! wait_port 127.0.0.1 $ARGO_PORT 15; then
         echo "❌ Cloudflared 启动失败"
-        tail -50 /tmp/cloudflared.log
         exit 1
     fi
     echo "✓ Cloudflared 已成功启动"
@@ -142,4 +133,3 @@ quicktunnel
 
 echo "--- 启动 Caddy 前台 (port: $WSPORT) ---"
 exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
-
