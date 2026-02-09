@@ -103,15 +103,17 @@ quicktunnel() {
     echo "$ARGO_AUTH_B64" | base64 -d > /tmp/argo_auth.json
     chmod 600 /tmp/argo_auth.json
 
-    echo "--- 启动 Cloudflared ---"
-    ./cloudflared tunnel run "$TUNNEL_NAME" \
-        --credentials-contents "$(cat /tmp/argo_auth.json)" \
+    echo "--- 启动 Cloudflared Tunnel ---"
+    # 关键：只传 tunnel 名称，凭证文件用 --credentials-file
+    nohup ./cloudflared tunnel run "$TUNNEL_NAME" \
+        --credentials-file /tmp/argo_auth.json \
         --url "http://127.0.0.1:$ECHPORT" \
-        --metrics "0.0.0.0:$ARGO_PORT" &
-    CF_PID=$!
+        --metrics "0.0.0.0:$ARGO_PORT" \
+        > /tmp/cloudflared.log 2>&1 &
 
     if ! wait_port 127.0.0.1 $ARGO_PORT 15; then
         echo "❌ Cloudflared 启动失败"
+        tail -20 /tmp/cloudflared.log
         exit 1
     fi
     echo "✓ Cloudflared 已成功启动"
@@ -133,3 +135,4 @@ quicktunnel
 
 echo "--- 启动 Caddy 前台 (port: $WSPORT) ---"
 exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+
