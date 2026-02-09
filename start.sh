@@ -3,7 +3,7 @@ set -e
 
 # ================= 环境变量 =================
 ARGO_PORT="${ARGO_PORT:-8001}"        # metrics 端口
-ARGO_AUTH="${ARGO_AUTH:-eyJhIjoiYWJmZGRiMGY3NzdmYzQzZDhjOGJlZmY4Zjc1MTE5YzEiLCJ0IjoiYWYwMDMxZTQtNmE5Ni00ZjNmLThkN2ItOGNiOGVlMTQ4NmFhIiwicyI6IlpqVXpOMk5qTXpBdFpERXdNaTAwWm1FMUxUZ3paV010TkRnd01UWmlObVF4TWpFMSJ9}"            # tunnel credentials.json 内容
+ARGO_AUTH="${ARGO_AUTH:-cloudflared.exe service install eyJhIjoiYWJmZGRiMGY3NzdmYzQzZDhjOGJlZmY4Zjc1MTE5YzEiLCJ0IjoiYWYwMDMxZTQtNmE5Ni00ZjNmLThkN2ItOGNiOGVlMTQ4NmFhIiwicyI6IlpqVXpOMk5qTXpBdFpERXdNaTAwWm1FMUxUZ3paV010TkRnd01UWmlObVF4TWpFMSJ9}"            # tunnel credentials.json 内容
 TUNNEL_NAME="${TUNNEL_NAME:-ech-koyeb}"        # Tunnel 名字（不是域名）
 
 IPS="${IPS:-4}"
