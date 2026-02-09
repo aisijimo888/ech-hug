@@ -5,6 +5,7 @@ set -e
 ARGO_PORT="${ARGO_PORT:-8001}"        # metrics 端口
 ARGO_AUTH="${ARGO_AUTH:-eyJhIjoiYWJmZGRiMGY3NzdmYzQzZDhjOGJlZmY4Zjc1MTE5YzEiLCJ0IjoiYWYwMDMxZTQtNmE5Ni00ZjNmLThkN2ItOGNiOGVlMTQ4NmFhIiwicyI6IlpqVXpOMk5qTXpBdFpERXdNaTAwWm1FMUxUZ3paV010TkRnd01UWmlObVF4TWpFMSJ9}"            # tunnel credentials.json 内容
 TUNNEL_NAME="${TUNNEL_NAME:-ech-koyeb}"        # Tunnel 名字（不是域名）
+
 IPS="${IPS:-4}"
 OPERA="${OPERA:-0}"
 COUNTRY="${COUNTRY:-AM}"
@@ -142,4 +143,21 @@ EOF
         exit 1
     fi
 
-    echo "✓ Cloudflare Tunnel 已连接 (PID $
+    echo "✓ Cloudflare Tunnel 已连接 (PID $CF_PID)"
+}
+
+# ================= 参数校验 =================
+if [ "$IPS" != "4" ] && [ "$IPS" != "6" ]; then
+    echo "❌ IPS 只能是 4 或 6"
+    exit 1
+fi
+
+if [ "$OPERA" != "0" ] && [ "$OPERA" != "1" ]; then
+    echo "❌ OPERA 只能是 0 或 1"
+    exit 1
+fi
+
+quicktunnel
+
+echo "--- 启动 Caddy 前台 (port: $WSPORT) ---"
+exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
