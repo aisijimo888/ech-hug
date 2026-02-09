@@ -43,4 +43,107 @@ quicktunnel() {
             ;;
         aarch64|arm64)
             ECH_URL="https://github.com/webappstars/ech-hug/releases/download/3.0/ech-tunnel-linux-arm64"
-            OPERA_URL="https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy.linux-arm64"_
+            OPERA_URL="https://github.com/Snawoot/opera-proxy/releases/latest/download/opera-proxy.linux-arm64"
+            CLOUDFLARED_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64"
+            ;;
+        *)
+            echo "❌ 不支持的架构: $ARCH"
+            exit 1
+            ;;
+    esac
+
+    curl -fsSL "$ECH_URL" -o ech-server
+    curl -fsSL "$OPERA_URL" -o opera
+    curl -fsSL "$CLOUDFLARED_URL" -o cloudflared
+    chmod +x ech-server opera cloudflared
+
+    # ================= 分配端口 =================
+    WSPORT=${WSPORT:-$(get_free_port)}
+    ECHPORT=$((WSPORT + 1))
+    echo "Caddy: $WSPORT"
+    echo "ECH:   $ECHPORT"
+
+    # ================= Opera =================
+    if [ "$OPERA" = "1" ]; then
+        COUNTRY="${COUNTRY^^}"
+        operaport=$(get_free_port)
+        echo "启动 Opera Proxy ($COUNTRY) @ $operaport"
+        nohup ./opera -country "$COUNTRY" -socks-mode -bind-address "127.0.0.1:$operaport" > /dev/null 2>&1 &
+    fi
+
+    sleep 1
+
+    # ================= ECH =================
+    ECH_ARGS=(./ech-server -l "ws://0.0.0.0:$ECHPORT")
+    if [ -n "$TOKEN" ]; then
+        ECH_ARGS+=(-token "$TOKEN")
+    fi
+    if [ "$OPERA" = "1" ]; then
+        ECH_ARGS+=(-f "socks5://127.0.0.1:$operaport")
+    fi
+    echo "启动 ECH Server..."
+    nohup "${ECH_ARGS[@]}" > /tmp/ech.log 2>&1 &
+
+    if ! wait_port 127.0.0.1 $ECHPORT 15; then
+        echo "❌ ECH 端口 $ECHPORT 启动失败"
+        tail -20 /tmp/ech.log
+        exit 1
+    fi
+    echo "✓ ECH 已成功监听端口 $ECHPORT"
+
+    # ================= Cloudflared =================
+    if [ -z "$ARGO_AUTH" ]; then
+        echo "❌ 必须设置 ARGO_AUTH（JSON 内容）"
+        exit 1
+    fi
+
+    # 写入凭证文件
+    echo "$ARGO_AUTH" > /tmp/argo_auth.json
+    chmod 600 /tmp/argo_auth.json
+
+    echo "--- 启动 Cloudflared (临时隧道) ---"
+    nohup ./cloudflared tunnel --url "http://127.0.0.1:$ECHPORT" \
+        --credentials-file /tmp/argo_auth.json \
+        --metrics "0.0.0.0:$ARGO_PORT" \
+        > /tmp/cloudflared.log 2>&1 &
+
+    if ! wait_port 127.0.0.1 $ARGO_PORT 20; then
+        echo "❌ Cloudflared 启动失败"
+        tail -20 /tmp/cloudflared.log
+        exit 1
+    fi
+
+    # ================= 获取临时域名 =================
+    echo "--- 获取临时隧道域名 ---"
+    for i in $(seq 1 30); do
+        HOSTNAME=$(curl -s "http://127.0.0.1:$ARGO_PORT/metrics" 2>/dev/null | grep -oP 'userHostname="\K[^"]+')
+        if [ -n "$HOSTNAME" ]; then
+            echo "✓ 隧道启动成功，域名: $HOSTNAME"
+            break
+        fi
+        sleep 1
+    done
+
+    if [ -z "$HOSTNAME" ]; then
+        echo "❌ 无法获取临时隧道域名"
+        tail -20 /tmp/cloudflared.log
+        exit 1
+    fi
+}
+
+# ================= 参数校验 =================
+if [ "$IPS" != "4" ] && [ "$IPS" != "6" ]; then
+    echo "❌ IPS 只能是 4 或 6"
+    exit 1
+fi
+
+if [ "$OPERA" != "0" ] && [ "$OPERA" != "1" ]; then
+    echo "❌ OPERA 只能是 0 或 1"
+    exit 1
+fi
+
+# ================= 启动 =================
+quicktunnel
+
+echo "--- 启动 Caddy 前台 (port: $WSPORT) ---"
+exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
