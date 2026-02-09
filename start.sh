@@ -2,7 +2,7 @@
 set -e
 
 # ================= 环境变量 =================
-ARGO_AUTH_B64="${ARGO_AUTH_B64:-cloudflared.exe service install eyJhIjoiYWJmZGRiMGY3NzdmYzQzZDhjOGJlZmY4Zjc1MTE5YzEiLCJ0IjoiYWYwMDMxZTQtNmE5Ni00ZjNmLThkN2ItOGNiOGVlMTQ4NmFhIiwicyI6IlpqVXpOMk5qTXpBdFpERXdNaTAwWm1FMUxUZ3paV010TkRnd01UWmlObVF4TWpFMSJ9}"    # base64 编码的 JSON
+ARGO_AUTH_B64="${ARGO_AUTH_B64:-eyJhIjoiYWJmZGRiMGY3NzdmYzQzZDhjOGJlZmY4Zjc1MTE5YzEiLCJ0IjoiYWYwMDMxZTQtNmE5Ni00ZjNmLThkN2ItOGNiOGVlMTQ4NmFhIiwicyI6IlpqVXpOMk5qTXpBdFpERXdNaTAwWm1FMUxUZ3paV010TkRnd01UWmlObVF4TWpFMSJ9}"    # base64 编码的 JSON
 TUNNEL_NAME="${TUNNEL_NAME:-ech-koyeb}"        # Cloudflare Tunnel 名称
 ARGO_PORT="${ARGO_PORT:-8001}"        # Cloudflared metrics
 IPS="${IPS:-4}"                        # 4 或 6
