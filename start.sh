@@ -117,18 +117,24 @@ quicktunnel() {
         exit 1
     fi
 
-    # ================= 临时域名 =================
+    # ================= 临时 / 固定域名 =================
+get_tunnel_domain() {
     if [ -z "$ARGO_DOMAIN" ]; then
         echo "--- 获取临时隧道域名 ---"
         TUNNEL_DOMAIN=""
+
         for i in $(seq 1 30); do
-            TUNNEL_DOMAIN=$(curl -s "http://127.0.0.1:$ARGO_PORT/metrics" 2>/dev/null | grep 'userHostname=' | sed -E 's/.*userHostname="([^"]+)".*/\1/')
+            TUNNEL_DOMAIN=$(curl -s "http://127.0.0.1:$ARGO_PORT/metrics" 2>/dev/null \
+                | grep 'userHostname=' \
+                | sed -E 's/.*userHostname="([^"]+)".*/\1/')
+
             if [ -n "$TUNNEL_DOMAIN" ]; then
                 echo "✓ 隧道启动成功，域名: $TUNNEL_DOMAIN"
                 break
             fi
             sleep 1
         done
+
         if [ -z "$TUNNEL_DOMAIN" ]; then
             echo "❌ 获取临时域名失败"
             tail -20 "$CLOUDFLARED_LOG"
@@ -139,27 +145,58 @@ quicktunnel() {
         echo "✓ 使用固定域名: $TUNNEL_DOMAIN"
     fi
 }
-# ================= main =================
-# 确保此时 TUNNEL_DOMAIN 已经非空
-echo "当前隧道域名: $TUNNEL_DOMAIN"
 
-cat > /srv/index.html <<EOF
+# ================= 写入 index.html =================
+write_index_html() {
+    mkdir -p /srv
+
+    cat > /srv/index.html <<EOF
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <title>隧道状态</title>
+    <meta charset="UTF-8">
+    <title>Cloudflare Tunnel</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #0f172a;
+            color: #e5e7eb;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        .box {
+            background: #020617;
+            padding: 30px 40px;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0,0,0,.5);
+            text-align: center;
+        }
+        .domain {
+            font-size: 20px;
+            color: #38bdf8;
+            margin-top: 10px;
+            word-break: break-all;
+        }
+    </style>
 </head>
 <body>
-  <h1>隧道启动成功</h1>
-  <p>域名:
-    <a href="https://$TUNNEL_DOMAIN" target="_blank">
-      $TUNNEL_DOMAIN
-    </a>
-  </p>
+    <div class="box">
+        <h1>🚀 Tunnel 已就绪</h1>
+        <div class="domain">$TUNNEL_DOMAIN</div>
+    </div>
 </body>
 </html>
 EOF
+
+    echo "✓ 域名已写入 /srv/index.html"
+}
+
+# ================= 执行 =================
+get_tunnel_domain
+write_index_html
+
 
 # ================= main =================
 quicktunnel
